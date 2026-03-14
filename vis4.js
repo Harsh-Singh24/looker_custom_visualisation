@@ -18,7 +18,7 @@ looker.plugins.visualizations.add({
           width:100%;
           border-collapse:collapse;
           font-family:"Helvetica Neue", Helvetica, Arial, sans-serif;
-          font-size:13px;
+          font-size:7px;
         }
 
         th, td {
