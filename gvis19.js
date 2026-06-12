@@ -203,4 +203,171 @@ looker.plugins.visualizations.add({
         if (h.field) {
           fieldName = h.field.label_short || h.field.label || h.field.name;
         }
-        if (customLabel && typeof customLabel === 'string' &&
+        if (customLabel && typeof customLabel === 'string' && customLabel.trim() !== "") {
+          fieldName = customLabel;
+        }
+
+        if (!h.pivot) {
+          var headerText = "";
+          if (config.show_full_field_name && viewName !== "") {
+            headerText = '<span class="field-name">' + viewName + ' ' + fieldName + '</span>';
+          } else if (viewName !== "") {
+            headerText = '<span class="view-name">' + viewName + '</span><span class="field-name">' + fieldName + '</span>';
+          } else {
+            headerText = '<span class="field-name">' + fieldName + '</span>';
+          }
+          
+          headerGrid[0][i] = { html: headerText, rowspan: maxHeaderRows, colspan: 1, cls: cls };
+        } else {
+          var labels = getPivotLabelsArray(h.pivot);
+          for (var pLevel = 0; pLevel < numPivotLevels; pLevel++) {
+            headerGrid[pLevel][i] = { 
+              html: '<span class="field-name">' + (labels[pLevel] || "") + '</span>', 
+              rowspan: 1, 
+              colspan: 1, 
+              cls: cls 
+            };
+          }
+          headerGrid[maxHeaderRows - 1][i] = { html: '<span class="field-name">' + fieldName + '</span>', rowspan: 1, colspan: 1, cls: cls };
+        }
+      });
+
+      if (hasPivot) {
+        for (var rLevel = 0; rLevel < numPivotLevels; rLevel++) {
+          for (var colIdx = 0; colIdx < headers.length; colIdx++) {
+            var currentCell = headerGrid[rLevel][colIdx];
+            if (!currentCell) continue;
+            
+            var checkNextIdx = colIdx + 1;
+            while (checkNextIdx < headers.length) {
+              var nextCell = headerGrid[rLevel][checkNextIdx];
+              if (nextCell && nextCell.html === currentCell.html) {
+                var structuresMatch = true;
+                for (var parentRow = 0; parentRow < rLevel; parentRow++) {
+                  var parentLabelsI = getPivotLabelsArray(headers[colIdx].pivot);
+                  var parentLabelsJ = getPivotLabelsArray(headers[checkNextIdx].pivot);
+                  if (parentLabelsI[parentRow] !== parentLabelsJ[parentRow]) {
+                    structuresMatch = false;
+                    break;
+                  }
+                }
+                if (structuresMatch) {
+                  currentCell.colspan++;
+                  headerGrid[rLevel][checkNextIdx] = null;
+                  checkNextIdx++;
+                } else {
+                  break;
+                }
+              } else {
+                break;
+              }
+            }
+          }
+        }
+      }
+
+      var tableClass = config.truncate_column_names ? "truncate-text" : "";
+      var html = '<table class="' + tableClass + '"><thead>';
+      
+      for (var rowIdx = 0; rowIdx < maxHeaderRows; rowIdx++) {
+        html += '<tr>';
+        if (rowIdx === 0 && config.show_row_numbers) {
+          html += '<th class="dim-header row-num" rowspan="' + maxHeaderRows + '">#</th>';
+        }
+        
+        for (var colIndex = 0; colIndex < headers.length; colIndex++) {
+          var targetGridCell = headerGrid[rowIdx][colIndex];
+          if (!targetGridCell) continue;
+          
+          var geometryAttributes = '';
+          if (targetGridCell.rowspan > 1) geometryAttributes += ' rowspan="' + targetGridCell.rowspan + '"';
+          if (targetGridCell.colspan > 1) geometryAttributes += ' colspan="' + targetGridCell.colspan + '"';
+          
+          geometryAttributes += ' data-index="' + colIndex + '"';
+          html += '<th class="' + targetGridCell.cls + '"' + geometryAttributes + '>' + targetGridCell.html + '<div class="resize-handle"></div></th>';
+        }
+        html += '</tr>';
+      }
+      html += "</thead><tbody>";
+
+      rows.forEach(function(row, r) {
+        html += "<tr>";
+        if (config.show_row_numbers) html += '<td class="row-num">' + (r + 1) + '</td>';
+
+        row.forEach(function(c, i) {
+          var isDim = c.header.type === "dimension";
+          var isCalc = c.header.type === "calculation";
+          
+          var val = 0;
+          if (c.cell && c.cell.value !== undefined && c.cell.value !== null) { val = c.cell.value; }
+
+          var isTotalEnabled = config["show_total_" + c.header.name];
+          if (config.show_column_totals && isTotalEnabled && !isDim && !isRateOrPercent(c.header.field)) {
+            columnTotals[i] += (typeof val === 'number' ? val : 0);
+          }
+
+          var cellClass = isDim ? 'dim-cell' : (isCalc ? 'calc-cell numeric' : 'measure-cell numeric');
+          html += '<td class="' + cellClass + ' cell-drill" data-row="' + r + '" data-col="' + i + '">' + formatValue(c.cell, c.header.field) + '</td>';
+        });
+        html += "</tr>";
+      });
+
+      html += "</tbody>";
+
+      if (config.show_column_totals) {
+        html += "<tfoot><tr>";
+        if (config.show_row_numbers) html += '<td class="total-cell row-num"></td>';
+
+        headers.forEach(function(h, i) {
+          var style = h.type === "dimension" ? "dim-cell" : "";
+          if (h.type === "dimension") {
+            html += '<td class="total-cell ' + style + '">' + (i === 0 ? "Total" : "") + '</td>';
+          } else {
+            var isTotalEnabled = config["show_total_" + h.name];
+            var safeToSum = !isRateOrPercent(h.field);
+            
+            if (isTotalEnabled && safeToSum) {
+              var totalVal = columnTotals[i];
+              html += '<td class="numeric total-cell">' + (totalVal !== 0 ? Math.round(totalVal).toLocaleString() : "0") + '</td>';
+            } else {
+              html += '<td class="numeric total-cell"></td>';
+            }
+          }
+        });
+        html += "</tr></tfoot>";
+      }
+      html += "</table>";
+
+      element.querySelector("#table_container").innerHTML = html;
+
+      if (details && details.print) { element.classList.add("is-printing"); } 
+      else { element.classList.remove("is-printing"); }
+
+      element.querySelectorAll("th[data-index]").forEach(function(header) {
+        header.onclick = function() {
+          var idx = parseInt(this.dataset.index);
+          sortDirection = (sortColumn === idx) ? sortDirection * -1 : 1;
+          sortColumn = idx;
+          rows.sort(function(a, b) {
+            var vA = -Infinity, vB = -Infinity;
+            if (a[idx] && a[idx].cell !== undefined && a[idx].cell !== null) { vA = a[idx].cell.value; }
+            if (b[idx] && b[idx].cell !== undefined && b[idx].cell !== null) { vB = b[idx].cell.value; }
+            return (vA < vB ? -1 : vA > vB ? 1 : 0) * sortDirection;
+          });
+          render();
+        };
+      });
+
+      element.querySelectorAll(".cell-drill").forEach(function(cell) {
+        cell.onclick = function(e) {
+          var r = this.dataset.row, c = this.dataset.col;
+          var cellData = rows[r][c].cell;
+          if (cellData && cellData.links) { LookerCharts.Utils.openDrillMenu({ links: cellData.links, event: e }); }
+        };
+      });
+    }
+
+    render();
+    setTimeout(function() { done(); }, 100);
+  }
+});
